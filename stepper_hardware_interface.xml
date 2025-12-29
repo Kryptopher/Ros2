@@ -1,0 +1,9 @@
+<library path="stepper_hardware_interface">
+  <class name="stepper_jtc_control/StepperHardwareInterface" 
+         type="stepper_jtc_control::StepperHardwareInterface" 
+         base_class_type="hardware_interface::SystemInterface">
+    <description>
+      Hardware interface for stepper motor control via serial communication
+    </description>
+  </class>
+</library>
