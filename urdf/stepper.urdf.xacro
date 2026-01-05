@@ -1,11 +1,10 @@
 <?xml version="1.0"?>
 <robot xmlns:xacro="http://www.ros.org/wiki/xacro" name="stepper_robot">
-
   <xacro:arg name="serial_port" default="/dev/ttyACM0"/>
   <xacro:arg name="baud_rate" default="115200"/>
   <xacro:arg name="steps_per_rev" default="200"/>
   <xacro:arg name="microsteps" default="8"/>
-
+  
   <!-- Base link -->
   <link name="base_link">
     <visual>
@@ -17,9 +16,9 @@
       </material>
     </visual>
   </link>
-
-  <!-- Stepper motor link -->
-  <link name="stepper_link">
+  
+  <!-- Waist link (was stepper_link) -->
+  <link name="waist_link">
     <visual>
       <geometry>
         <cylinder length="0.05" radius="0.03"/>
@@ -29,15 +28,55 @@
       </material>
     </visual>
   </link>
-
-  <!-- Joint connecting base to stepper -->
-  <joint name="stepper_joint" type="continuous">
+  
+  <!-- Waist joint (was stepper_joint) -->
+  <joint name="waist_joint" type="continuous">
     <parent link="base_link"/>
-    <child link="stepper_link"/>
+    <child link="waist_link"/>
     <origin xyz="0 0 0.05" rpy="0 0 0"/>
     <axis xyz="0 0 1"/>
   </joint>
-
+  
+  <!-- Shoulder link -->
+  <link name="shoulder_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.05" radius="0.03"/>
+      </geometry>
+      <material name="red">
+        <color rgba="0.8 0 0 1"/>
+      </material>
+    </visual>
+  </link>
+  
+  <!-- Shoulder joint -->
+  <joint name="shoulder_joint" type="continuous">
+    <parent link="waist_link"/>
+    <child link="shoulder_link"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  
+  <!-- Elbow link -->
+  <link name="elbow_link">
+    <visual>
+      <geometry>
+        <cylinder length="0.05" radius="0.03"/>
+      </geometry>
+      <material name="green">
+        <color rgba="0 0.8 0 1"/>
+      </material>
+    </visual>
+  </link>
+  
+  <!-- Elbow joint -->
+  <joint name="elbow_joint" type="continuous">
+    <parent link="shoulder_link"/>
+    <child link="elbow_link"/>
+    <origin xyz="0 0 0.05" rpy="0 0 0"/>
+    <axis xyz="0 0 1"/>
+  </joint>
+  
   <!-- ros2_control hardware interface -->
   <ros2_control name="StepperSystem" type="system">
     <hardware>
@@ -48,7 +87,7 @@
       <param name="microsteps">$(arg microsteps)</param>
     </hardware>
     
-    <joint name="stepper_joint">
+    <joint name="waist_joint">
       <command_interface name="velocity">
         <param name="min">-50</param>
         <param name="max">50</param>
@@ -56,6 +95,24 @@
       <state_interface name="position"/>
       <state_interface name="velocity"/>
     </joint>
+    
+    <joint name="shoulder_joint">
+      <command_interface name="velocity">
+        <param name="min">-50</param>
+        <param name="max">50</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    
+    <joint name="elbow_joint">
+      <command_interface name="velocity">
+        <param name="min">-50</param>
+        <param name="max">50</param>
+      </command_interface>
+      <state_interface name="position"/>
+      <state_interface name="velocity"/>
+    </joint>
+    
   </ros2_control>
-
 </robot>

@@ -1,41 +1,47 @@
 controller_manager:
   ros__parameters:
     update_rate: 500  # 500 Hz control loop
-
-    stepper_trajectory_controller:
+    kinematic_controller_baseline:
       type: joint_trajectory_controller/JointTrajectoryController
-
     joint_state_broadcaster:
       type: joint_state_broadcaster/JointStateBroadcaster
 
-
-stepper_trajectory_controller:
+kinematic_controller_baseline:
   ros__parameters:
     joints:
-      - stepper_joint
-    
+      - waist_joint
+      - shoulder_joint
+      - elbow_joint
     command_interfaces:
       - velocity
-    
     state_interfaces:
       - position
       - velocity
-    
     open_loop_control: true
-    
     interpolation_method: none
-    
     allow_partial_joints_goal: false
-    
     constraints:
       stopped_velocity_tolerance: 0.01
       goal_time: 0.0
-      stepper_joint:
+      waist_joint:
         trajectory: 100.0
         goal: 100.0
-    
+      shoulder_joint:
+        trajectory: 100.0
+        goal: 100.0
+      elbow_joint:
+        trajectory: 100.0
+        goal: 100.0
     gains:
-      stepper_joint:
+      waist_joint:
+        p: 0.0
+        i: 0.0
+        d: 0.0
+      shoulder_joint:
+        p: 0.0
+        i: 0.0
+        d: 0.0
+      elbow_joint:
         p: 0.0
         i: 0.0
         d: 0.0
@@ -43,4 +49,6 @@ stepper_trajectory_controller:
 joint_state_broadcaster:
   ros__parameters:
     joints:
-      - stepper_joint
+      - waist_joint
+      - shoulder_joint
+      - elbow_joint

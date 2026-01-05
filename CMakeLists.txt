@@ -68,6 +68,34 @@ rclcpp_components_register_node(stepper_trajectory_client
   EXECUTABLE stepper_trajectory_client_node
 )
 
+# Build the production multi-joint client
+add_library(multi_joint_trajectory_client SHARED
+  src/multi_joint_trajectory_client.cpp
+)
+
+target_include_directories(multi_joint_trajectory_client PRIVATE
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+
+target_compile_definitions(multi_joint_trajectory_client
+  PRIVATE "STEPPER_CONTROL_BUILDING_DLL"
+)
+
+ament_target_dependencies(multi_joint_trajectory_client
+  rclcpp
+  rclcpp_action
+  rclcpp_components
+  control_msgs
+  sensor_msgs
+  trajectory_msgs
+)
+
+rclcpp_components_register_node(multi_joint_trajectory_client
+  PLUGIN "stepper_jtc_control::MultiJointTrajectoryClient"
+  EXECUTABLE multi_joint_trajectory_client_node
+)
+
 # Build the trajectory logger
 add_executable(trajectory_logger
   src/trajectory_logger.cpp
@@ -82,7 +110,8 @@ ament_target_dependencies(trajectory_logger
 install(TARGETS
   stepper_hardware_interface
   stepper_trajectory_client
-  ARCHIVE DESTINATION lib
+  multi_joint_trajectory_client 
+ ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
@@ -105,7 +134,7 @@ install(DIRECTORY
 )
 
 ament_export_include_directories(include)
-ament_export_libraries(stepper_hardware_interface stepper_trajectory_client)
+ament_export_libraries(stepper_hardware_interface stepper_trajectory_client multi_joint_trajectory_client)
 ament_export_dependencies(
   hardware_interface
   pluginlib

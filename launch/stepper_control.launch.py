@@ -106,7 +106,7 @@ def generate_launch_description():
     trajectory_controller_spawner = Node(
         package="controller_manager",
         executable="spawner",
-        arguments=["stepper_trajectory_controller", "--controller-manager", "/controller_manager"],
+        arguments=["kinematic_controller_baseline", "--controller-manager", "/controller_manager"],
     )
 
     # Delay trajectory controller spawner after joint state broadcaster

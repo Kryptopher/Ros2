@@ -57,13 +57,14 @@ public:
     goal_msg.trajectory.joint_names = {"stepper_joint"};
 
     std::vector<std::pair<double, double>> velocity_steps = {
-      {0.0, 5.0},
-      {5.0, 25.0},
-      {10.0, 10.0},
-      {15.0, 0.0},
-      {20.0, 50.0},
-      {25.0, 0.0},
-      {26.0, 0.0}
+      {0.000, 5.0},
+      {0.750, 0.0},
+      {1.155, 5.0},
+      {1.905, 0.0},
+      {3.500, -5.0},
+      {5.000, 0.0},
+      {8.000, 0.0}
+      //{26.0, 0.0}
     };
 
     if (!validate_velocity_profile(velocity_steps)) {

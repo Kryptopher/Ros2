@@ -182,12 +182,14 @@ hardware_interface::return_type StepperHardwareInterface::read(
 hardware_interface::return_type StepperHardwareInterface::write(
   const rclcpp::Time & /*time*/, const rclcpp::Duration & /*period*/)
 {
-  // Send velocity command to Teensy
-  for (size_t i = 0; i < hw_commands_.size(); i++)
+  // Send velocity command for first joint
+  // Note: This implementation sends commands only to the first joint in the hardware configuration
+  // Additional joints can be controlled by extending the hardware interface virtual for testing
+  if (hw_commands_.size() > 0)
   {
-    send_velocity_command(hw_commands_[i]);
+    send_velocity_command(hw_commands_[0]);
   }
-
+  
   return hardware_interface::return_type::OK;
 }
 
