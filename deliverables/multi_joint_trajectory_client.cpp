@@ -21,7 +21,7 @@ namespace stepper_jtc_control
 struct VelocityStep
 {
   double time;
-  std::array<double, 3> velocities;  // waist, shoulder, elbow
+  std::array<double, 3> velocities;  // waist, shoulder, elbow (rad/s)
 };
 
 class MultiJointTrajectoryClient : public rclcpp::Node
@@ -38,23 +38,65 @@ public:
       "/kinematic_controller_baseline/follow_joint_trajectory");
     this->declare_parameter("csv_file_path", "");
     this->declare_parameter("sampling_rate", 0.02);
-    this->declare_parameter("max_velocity", 100.0);
-    this->declare_parameter("max_acceleration", 1000.0);
+    
+    // UPDATED: Per-joint limits from MoveIt configuration
+    this->declare_parameter("max_velocities", std::vector<double>{0.20, 0.035, 0.035});
+    this->declare_parameter("max_accelerations", std::vector<double>{0.0005, 0.025, 0.025});
+    
     this->declare_parameter("feedback_throttle", 10);
     this->declare_parameter("wait_for_joint_states", true);
     this->declare_parameter("joint_state_topic", "/joint_states");
     this->declare_parameter("joint_state_timeout", 5.0);
     
+    // UPDATED: Position limits from MoveIt configuration
+    this->declare_parameter("enforce_position_limits", true);
+    this->declare_parameter("min_positions", std::vector<double>{-1.70, -1.0, -1.570796});
+    this->declare_parameter("max_positions", std::vector<double>{1.17, 0.7853981, 1.0});
+    
     // Get parameters
     action_server_name_ = this->get_parameter("action_server_name").as_string();
     csv_file_path_ = this->get_parameter("csv_file_path").as_string();
     sampling_rate_ = this->get_parameter("sampling_rate").as_double();
-    max_velocity_ = this->get_parameter("max_velocity").as_double();
-    max_acceleration_ = this->get_parameter("max_acceleration").as_double();
+    
+    // Get per-joint velocity limits
+    auto max_vel_param = this->get_parameter("max_velocities").as_double_array();
+    if (max_vel_param.size() != 3) {
+      RCLCPP_ERROR(this->get_logger(), 
+                   "max_velocities must have exactly 3 values (one per joint)");
+      rclcpp::shutdown();
+      return;
+    }
+    max_velocities_ = {max_vel_param[0], max_vel_param[1], max_vel_param[2]};
+    
+    // Get per-joint acceleration limits
+    auto max_acc_param = this->get_parameter("max_accelerations").as_double_array();
+    if (max_acc_param.size() != 3) {
+      RCLCPP_ERROR(this->get_logger(), 
+                   "max_accelerations must have exactly 3 values (one per joint)");
+      rclcpp::shutdown();
+      return;
+    }
+    max_accelerations_ = {max_acc_param[0], max_acc_param[1], max_acc_param[2]};
+    
     feedback_throttle_ = this->get_parameter("feedback_throttle").as_int();
     wait_for_joint_states_ = this->get_parameter("wait_for_joint_states").as_bool();
     joint_state_topic_ = this->get_parameter("joint_state_topic").as_string();
     joint_state_timeout_ = this->get_parameter("joint_state_timeout").as_double();
+    
+    // Get position limits parameters
+    enforce_position_limits_ = this->get_parameter("enforce_position_limits").as_bool();
+    auto min_pos_param = this->get_parameter("min_positions").as_double_array();
+    auto max_pos_param = this->get_parameter("max_positions").as_double_array();
+    
+    if (min_pos_param.size() != 3 || max_pos_param.size() != 3) {
+      RCLCPP_ERROR(this->get_logger(), 
+                   "Position limits must have exactly 3 values (one per joint)");
+      rclcpp::shutdown();
+      return;
+    }
+    
+    min_positions_ = {min_pos_param[0], min_pos_param[1], min_pos_param[2]};
+    max_positions_ = {max_pos_param[0], max_pos_param[1], max_pos_param[2]};
     
     // Initialize joint names in required order: waist, shoulder, elbow
     joint_names_ = {"waist_joint", "shoulder_joint", "elbow_joint"};
@@ -63,7 +105,21 @@ public:
     RCLCPP_INFO(this->get_logger(), "Action server: %s", action_server_name_.c_str());
     RCLCPP_INFO(this->get_logger(), "Joint state topic: %s", joint_state_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "CSV file: %s", 
-                csv_file_path_.empty() ? "Not specified" : csv_file_path_.c_str());
+                csv_file_path_.empty() ? "Not specified (will use default)" : csv_file_path_.c_str());
+    
+    // Log per-joint limits
+    RCLCPP_INFO(this->get_logger(), "Joint limits (from MoveIt configuration):");
+    for (size_t i = 0; i < 3; i++) {
+      RCLCPP_INFO(this->get_logger(), "  %s:", joint_names_[i].c_str());
+      RCLCPP_INFO(this->get_logger(), "    Position: [%.4f, %.4f] rad", 
+                  min_positions_[i], max_positions_[i]);
+      RCLCPP_INFO(this->get_logger(), "    Velocity: %.4f rad/s", max_velocities_[i]);
+      RCLCPP_INFO(this->get_logger(), "    Acceleration: %.4f rad/s²", max_accelerations_[i]);
+    }
+    
+    if (!enforce_position_limits_) {
+      RCLCPP_WARN(this->get_logger(), "Position limits enforcement is DISABLED");
+    }
     
     // Create action client
     this->client_ptr_ = rclcpp_action::create_client<FollowJointTrajectory>(
@@ -117,17 +173,18 @@ public:
         return;
       }
     } else {
-      // Use default hardcoded profile if no CSV provided
+      // UPDATED: Default profile with realistic velocities matching system limits
       velocity_steps = {
-        {0.0, {5.0, 3.0, 2.0}},
-        {5.0, {25.0, 15.0, 10.0}},
-        {10.0, {10.0, 8.0, 5.0}},
-        {15.0, {0.0, 0.0, 0.0}},
-        {20.0, {50.0, 30.0, 20.0}},
-        {25.0, {0.0, 0.0, 0.0}},
-        {26.0, {0.0, 0.0, 0.0}}
+        {0.0, {0.0, 0.0, 0.0}},          // Start at rest
+        {5.0, {0.1, 0.02, 0.015}},       // Ramp up slowly
+        {10.0, {0.15, 0.03, 0.025}},     // Increase
+        {15.0, {0.2, 0.035, 0.035}},     // Maximum velocities
+        {20.0, {0.1, 0.015, 0.01}},      // Slow down
+        {25.0, {0.0, 0.0, 0.0}},         // Stop
+        {30.0, {0.0, 0.0, 0.0}}          // Hold
       };
       RCLCPP_WARN(this->get_logger(), "Using default hardcoded velocity profile");
+      RCLCPP_INFO(this->get_logger(), "Default profile uses system max velocities: waist=0.2, shoulder/elbow=0.035 rad/s");
     }
 
     // Validate velocity profile
@@ -171,8 +228,8 @@ private:
   std::vector<std::string> joint_names_;
   
   double sampling_rate_;
-  double max_velocity_;
-  double max_acceleration_;
+  std::array<double, 3> max_velocities_;      // Per-joint velocity limits
+  std::array<double, 3> max_accelerations_;   // Per-joint acceleration limits
   double joint_state_timeout_;
   int feedback_throttle_;
   int feedback_counter_;
@@ -180,6 +237,10 @@ private:
   
   std::array<double, 3> current_joint_positions_{0.0, 0.0, 0.0};
   bool positions_received_{false};
+  
+  bool enforce_position_limits_;
+  std::array<double, 3> min_positions_;
+  std::array<double, 3> max_positions_;
 
   void joint_state_callback(const sensor_msgs::msg::JointState::SharedPtr msg)
   {
@@ -220,7 +281,7 @@ private:
   bool wait_for_joint_states_with_timeout(double timeout_seconds)
   {
     auto start_time = this->now();
-    rclcpp::Rate rate(100);  // Check at 100 Hz
+    rclcpp::Rate rate(100);
     
     while (rclcpp::ok()) {
       if (positions_received_) {
@@ -327,14 +388,14 @@ private:
       return false;
     }
 
+    // Check per-joint velocity limits
     for (size_t i = 0; i < velocity_steps.size(); i++) {
-      // Check velocity limits for each joint
       for (int joint = 0; joint < 3; joint++) {
-        if (std::abs(velocity_steps[i].velocities[joint]) > max_velocity_) {
+        if (std::abs(velocity_steps[i].velocities[joint]) > max_velocities_[joint]) {
           RCLCPP_ERROR(this->get_logger(), 
-                       "Velocity %.2f exceeds max %.2f for %s at t=%.2f", 
+                       "Velocity %.4f rad/s exceeds max %.4f rad/s for %s at t=%.2f", 
                        velocity_steps[i].velocities[joint], 
-                       max_velocity_, 
+                       max_velocities_[joint], 
                        joint_names_[joint].c_str(),
                        velocity_steps[i].time);
           return false;
@@ -350,22 +411,24 @@ private:
           return false;
         }
 
-        // Check acceleration limits
+        // Check per-joint acceleration limits
         double dt = velocity_steps[i].time - velocity_steps[i-1].time;
         for (int joint = 0; joint < 3; joint++) {
           double dv = velocity_steps[i].velocities[joint] - velocity_steps[i-1].velocities[joint];
           double acc = std::abs(dv / dt);
           
-          if (acc > max_acceleration_) {
-            RCLCPP_WARN(this->get_logger(), 
-                        "Acceleration %.2f exceeds max %.2f for %s between t=%.2f and t=%.2f", 
-                        acc, max_acceleration_, joint_names_[joint].c_str(),
+          if (acc > max_accelerations_[joint]) {
+            RCLCPP_ERROR(this->get_logger(), 
+                        "Acceleration %.4f rad/s² exceeds max %.4f rad/s² for %s between t=%.2f and t=%.2f", 
+                        acc, max_accelerations_[joint], joint_names_[joint].c_str(),
                         velocity_steps[i-1].time, velocity_steps[i].time);
+            return false;
           }
         }
       }
     }
 
+    RCLCPP_INFO(this->get_logger(), "Velocity profile validation passed");
     return true;
   }
 
@@ -437,6 +500,22 @@ private:
       // Update positions using trapezoidal integration
       for (int j = 0; j < 3; j++) {
         positions[j] += (previous_velocities[j] + current_velocities[j]) * dt / 2.0;
+        
+        // Position limits check with clamping
+        if (enforce_position_limits_) {
+          if (positions[j] < min_positions_[j]) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                 "%s position %.4f rad below minimum %.4f rad at t=%.2fs. Clamping.",
+                                 joint_names_[j].c_str(), positions[j], min_positions_[j], t);
+            positions[j] = min_positions_[j];
+          }
+          else if (positions[j] > max_positions_[j]) {
+            RCLCPP_WARN_THROTTLE(this->get_logger(), *this->get_clock(), 5000,
+                                 "%s position %.4f rad exceeds maximum %.4f rad at t=%.2fs. Clamping.",
+                                 joint_names_[j].c_str(), positions[j], max_positions_[j], t);
+            positions[j] = max_positions_[j];
+          }
+        }
       }
       
       if (t >= total_time) break;
@@ -470,19 +549,19 @@ private:
                        last_point.time_from_start.nanosec / 1e9;
 
     RCLCPP_INFO(this->get_logger(), "First point (t=%.3f s):", first_time);
-    RCLCPP_INFO(this->get_logger(), "  Positions: [%.6f, %.6f, %.6f]",
+    RCLCPP_INFO(this->get_logger(), "  Positions: [%.6f, %.6f, %.6f] rad",
                 first_point.positions[0], first_point.positions[1], first_point.positions[2]);
-    RCLCPP_INFO(this->get_logger(), "  Velocities: [%.6f, %.6f, %.6f]",
+    RCLCPP_INFO(this->get_logger(), "  Velocities: [%.6f, %.6f, %.6f] rad/s",
                 first_point.velocities[0], first_point.velocities[1], first_point.velocities[2]);
-    RCLCPP_INFO(this->get_logger(), "  Accelerations: [%.6f, %.6f, %.6f]",
+    RCLCPP_INFO(this->get_logger(), "  Accelerations: [%.6f, %.6f, %.6f] rad/s²",
                 first_point.accelerations[0], first_point.accelerations[1], first_point.accelerations[2]);
 
     RCLCPP_INFO(this->get_logger(), "Last point (t=%.3f s):", last_time);
-    RCLCPP_INFO(this->get_logger(), "  Positions: [%.6f, %.6f, %.6f]",
+    RCLCPP_INFO(this->get_logger(), "  Positions: [%.6f, %.6f, %.6f] rad",
                 last_point.positions[0], last_point.positions[1], last_point.positions[2]);
-    RCLCPP_INFO(this->get_logger(), "  Velocities: [%.6f, %.6f, %.6f]",
+    RCLCPP_INFO(this->get_logger(), "  Velocities: [%.6f, %.6f, %.6f] rad/s",
                 last_point.velocities[0], last_point.velocities[1], last_point.velocities[2]);
-    RCLCPP_INFO(this->get_logger(), "  Accelerations: [%.6f, %.6f, %.6f]",
+    RCLCPP_INFO(this->get_logger(), "  Accelerations: [%.6f, %.6f, %.6f] rad/s²",
                 last_point.accelerations[0], last_point.accelerations[1], last_point.accelerations[2]);
     RCLCPP_INFO(this->get_logger(), "===========================");
   }
