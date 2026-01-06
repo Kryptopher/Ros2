@@ -37,11 +37,11 @@ public:
     this->declare_parameter("action_server_name", 
       "/kinematic_controller_baseline/follow_joint_trajectory");
     this->declare_parameter("csv_file_path", "");
-    this->declare_parameter("sampling_rate", 0.02);
+    this->declare_parameter("sampling_rate", 0.01);
     
     // UPDATED: Per-joint limits from MoveIt configuration
     this->declare_parameter("max_velocities", std::vector<double>{0.20, 0.035, 0.035});
-    this->declare_parameter("max_accelerations", std::vector<double>{0.0005, 0.025, 0.025});
+    this->declare_parameter("max_accelerations", std::vector<double>{9999.0, 9999.0, 9999.0});
     
     this->declare_parameter("feedback_throttle", 10);
     this->declare_parameter("wait_for_joint_states", true);
@@ -136,6 +136,20 @@ public:
       std::bind(&MultiJointTrajectoryClient::send_trajectory, this));
   }
 
+  // Destructor
+  ~MultiJointTrajectoryClient()
+  {
+    if (active_goal_handle_) {
+      RCLCPP_INFO(this->get_logger(), "Cancelling active trajectory before shutdown");
+      auto cancel_future = client_ptr_->async_cancel_goal(active_goal_handle_);
+      if (rclcpp::spin_until_future_complete(this->get_node_base_interface(), cancel_future, 
+                                             std::chrono::milliseconds(500)) == 
+          rclcpp::FutureReturnCode::SUCCESS) {
+        RCLCPP_INFO(this->get_logger(), "Trajectory cancelled successfully");
+      }
+    }
+  }
+
   void send_trajectory()
   {
     using namespace std::placeholders;
@@ -166,25 +180,17 @@ public:
     // Load velocity profile
     std::vector<VelocityStep> velocity_steps;
     
-    if (!csv_file_path_.empty()) {
-      velocity_steps = load_velocity_profile_from_csv(csv_file_path_);
-      if (velocity_steps.empty()) {
-        RCLCPP_ERROR(this->get_logger(), "Failed to load velocity profile from CSV");
-        return;
-      }
-    } else {
-      // UPDATED: Default profile with realistic velocities matching system limits
-      velocity_steps = {
-        {0.0, {0.0, 0.0, 0.0}},          // Start at rest
-        {5.0, {0.1, 0.02, 0.015}},       // Ramp up slowly
-        {10.0, {0.15, 0.03, 0.025}},     // Increase
-        {15.0, {0.2, 0.035, 0.035}},     // Maximum velocities
-        {20.0, {0.1, 0.015, 0.01}},      // Slow down
-        {25.0, {0.0, 0.0, 0.0}},         // Stop
-        {30.0, {0.0, 0.0, 0.0}}          // Hold
-      };
-      RCLCPP_WARN(this->get_logger(), "Using default hardcoded velocity profile");
-      RCLCPP_INFO(this->get_logger(), "Default profile uses system max velocities: waist=0.2, shoulder/elbow=0.035 rad/s");
+    if (csv_file_path_.empty()) {
+      RCLCPP_ERROR(this->get_logger(), "No CSV file path provided. Set csv_file_path parameter.");
+      rclcpp::shutdown();
+      return;
+    }
+    
+    velocity_steps = load_velocity_profile_from_csv(csv_file_path_);
+    if (velocity_steps.empty()) {
+      RCLCPP_ERROR(this->get_logger(), "Failed to load velocity profile from CSV");
+      rclcpp::shutdown();
+      return;
     }
 
     // Validate velocity profile
@@ -206,12 +212,12 @@ public:
 
     // Send goal
     auto send_goal_options = rclcpp_action::Client<FollowJointTrajectory>::SendGoalOptions();
-    send_goal_options.goal_response_callback =
-      std::bind(&MultiJointTrajectoryClient::goal_response_callback, this, _1);
+    send_goal_options.goal_response_callback = 
+    [this](auto goal_handle) { goal_response_callback(goal_handle); };
     send_goal_options.feedback_callback =
-      std::bind(&MultiJointTrajectoryClient::feedback_callback, this, _1, _2);
+    [this](auto goal_handle, auto feedback) { feedback_callback(goal_handle, feedback); };
     send_goal_options.result_callback =
-      std::bind(&MultiJointTrajectoryClient::result_callback, this, _1);
+    [this](auto result) { result_callback(result); };
 
     feedback_counter_ = 0;
     this->client_ptr_->async_send_goal(goal_msg, send_goal_options);
@@ -220,6 +226,7 @@ public:
 private:
   rclcpp_action::Client<FollowJointTrajectory>::SharedPtr client_ptr_;
   rclcpp::Subscription<sensor_msgs::msg::JointState>::SharedPtr joint_state_sub_;
+  rclcpp_action::ClientGoalHandle<FollowJointTrajectory>::SharedPtr active_goal_handle_;
   rclcpp::TimerBase::SharedPtr timer_;
   
   std::string action_server_name_;
@@ -571,6 +578,7 @@ private:
     if (!goal_handle) {
       RCLCPP_ERROR(this->get_logger(), "Goal was rejected by server");
     } else {
+      active_goal_handle_ = goal_handle; // Store active goal
       RCLCPP_INFO(this->get_logger(), "Goal accepted by server, executing trajectory");
     }
   }
