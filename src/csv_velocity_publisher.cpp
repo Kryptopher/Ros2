@@ -6,11 +6,38 @@
 #include <sstream>
 #include <array>
 #include <limits>
+#include <thread>
+#include <csignal>
 
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/float64_multi_array.hpp"
 
 using namespace std::chrono_literals;
+
+// Global pointer for signal handler
+static std::shared_ptr<rclcpp::Node> g_node_ptr = nullptr;
+static rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr g_publisher_ptr = nullptr;
+
+// Signal handler to send zero velocities before shutdown
+void signal_handler(int signum)
+{
+  if (g_publisher_ptr && g_node_ptr) {
+    RCLCPP_INFO(g_node_ptr->get_logger(), "Signal caught - sending zero velocities");
+    
+    auto msg = std_msgs::msg::Float64MultiArray();
+    msg.data = {0.0, 0.0, 0.0};
+    
+    // Publish multiple times to ensure it gets through
+    for (int i = 0; i < 3; i++) {
+      g_publisher_ptr->publish(msg);
+      std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+  }
+  
+  // Now let ROS handle the shutdown
+  rclcpp::shutdown();
+  exit(signum);
+}
 
 // Stores a single velocity command with timestamp and motor velocities
 struct VelocityCommand
@@ -65,7 +92,7 @@ public:
     
     // Create publisher for motor commands
     publisher_ = this->create_publisher<std_msgs::msg::Float64MultiArray>(command_topic_, 10);
-    
+  
     // Log initialization summary
     RCLCPP_INFO(this->get_logger(), "CSV Velocity Publisher initialized");
     RCLCPP_INFO(this->get_logger(), "  File: %s", csv_file_path_.c_str());
@@ -88,6 +115,12 @@ public:
     
     start_time_ = this->now();
     RCLCPP_INFO(this->get_logger(), "Starting velocity profile...");
+  }
+
+  // Getter for publisher (to use in signal handler)
+  rclcpp::Publisher<std_msgs::msg::Float64MultiArray>::SharedPtr get_publisher() 
+  {
+    return publisher_;
   }
 
 private:
@@ -281,7 +314,16 @@ private:
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<CSVVelocityPublisher>());
-  rclcpp::shutdown();
+  auto node = std::make_shared<CSVVelocityPublisher>();
+  
+  // Set global pointers for signal handler (do it here, not in constructor)
+  g_node_ptr = node;
+  g_publisher_ptr = node->get_publisher();
+  
+  // Register signal handlers
+  std::signal(SIGINT, signal_handler);
+  std::signal(SIGTERM, signal_handler);
+  
+  rclcpp::spin(node);
   return 0;
 }
