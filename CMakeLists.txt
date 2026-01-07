@@ -15,6 +15,8 @@ find_package(pluginlib REQUIRED)
 find_package(rclcpp_lifecycle REQUIRED)
 find_package(control_msgs REQUIRED)
 find_package(trajectory_msgs REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
 
 # Build the hardware interface library
 add_library(stepper_hardware_interface SHARED
@@ -96,6 +98,17 @@ rclcpp_components_register_node(multi_joint_trajectory_client
   EXECUTABLE multi_joint_trajectory_client_node
 )
 
+# Build CSV velocity publisher (single topic)
+add_executable(csv_velocity_publisher_node
+  src/csv_velocity_publisher.cpp
+)
+
+ament_target_dependencies(csv_velocity_publisher_node
+  rclcpp
+  std_msgs
+)
+
+
 # Build the trajectory logger
 add_executable(trajectory_logger
   src/trajectory_logger.cpp
@@ -106,21 +119,24 @@ ament_target_dependencies(trajectory_logger
   control_msgs
 )
 
-# Install
+# Install libraries
 install(TARGETS
   stepper_hardware_interface
   stepper_trajectory_client
   multi_joint_trajectory_client 
- ARCHIVE DESTINATION lib
+  ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
 )
 
+# Install executables
 install(TARGETS
+  csv_velocity_publisher_node
   trajectory_logger
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# Install directories
 install(DIRECTORY
   include/
   DESTINATION include
@@ -133,6 +149,7 @@ install(DIRECTORY
   DESTINATION share/${PROJECT_NAME}
 )
 
+# Export
 ament_export_include_directories(include)
 ament_export_libraries(stepper_hardware_interface stepper_trajectory_client multi_joint_trajectory_client)
 ament_export_dependencies(

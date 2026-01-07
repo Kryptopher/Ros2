@@ -105,7 +105,7 @@ public:
     RCLCPP_INFO(this->get_logger(), "Action server: %s", action_server_name_.c_str());
     RCLCPP_INFO(this->get_logger(), "Joint state topic: %s", joint_state_topic_.c_str());
     RCLCPP_INFO(this->get_logger(), "CSV file: %s", 
-                csv_file_path_.empty() ? "Not specified (will use default)" : csv_file_path_.c_str());
+                csv_file_path_.empty() ? "Not specified" : csv_file_path_.c_str());
     
     // Log per-joint limits
     RCLCPP_INFO(this->get_logger(), "Joint limits (from MoveIt configuration):");
@@ -128,13 +128,15 @@ public:
     // Subscribe to joint states
     joint_state_sub_ = this->create_subscription<sensor_msgs::msg::JointState>(
       joint_state_topic_, 10,
-      std::bind(&MultiJointTrajectoryClient::joint_state_callback, this, std::placeholders::_1));
+      [this](const sensor_msgs::msg::JointState::SharedPtr msg) { 
+        joint_state_callback(msg); 
+      });
     
     // Start timer to send trajectory
     this->timer_ = this->create_wall_timer(
       std::chrono::milliseconds(1000),
-      std::bind(&MultiJointTrajectoryClient::send_trajectory, this));
-  }
+      [this]() { send_trajectory(); });
+    }
 
   // Destructor
   ~MultiJointTrajectoryClient()
